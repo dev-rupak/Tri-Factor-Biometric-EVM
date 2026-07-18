@@ -9,7 +9,7 @@
 #include <hd44780.h>
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 
-Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial);
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
 hd44780_I2Cexp lcd;
 
 uint8_t templateBuffer[512];
@@ -165,8 +165,18 @@ void setup() {
 
   lcdPrint("Starting Up...", "Please Wait");
   finger.begin(57600);
-  smartDelay(1200);
-  if (!finger.verifyPassword()) {
+
+  // ── FP sensor handshake retry ────────────────────────────────
+  // Gives the sensor / power rail time to settle at true cold boot,
+  // instead of a single tight check that halts permanently.
+  bool fpBootOk = false;
+  for (int attempt = 0; attempt < 8 && !fpBootOk; attempt++) {
+    lcdPrint("Starting Up...", "Checking sensor");
+    smartDelay(1000);
+    fpBootOk = finger.verifyPassword();
+  }
+
+  if (!fpBootOk) {
     lcdPrint("Hardware Error", "Check FP Sensor");
     while (true)
       ;
@@ -1094,8 +1104,8 @@ bool scanFinger(int expectedId, int tries) {
 
 bool extractAndSendTemplate(int id) {
   memset(templateBuffer, 0, sizeof(templateBuffer));
-  while (Serial.available())
-    Serial.read();
+  while (Serial1.available())
+    Serial1.read();
 
   if (finger.loadModel(id) != FINGERPRINT_OK) {
     lcdPrint("Load failed", "");
@@ -1105,18 +1115,18 @@ bool extractAndSendTemplate(int id) {
 
   uint8_t upChar[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
                       0x00, 0x04, 0x08, 0x01, 0x00, 0x0E};
-  Serial.write(upChar, 13);
+  Serial1.write(upChar, 13);
 
   long t = millis();
-  while (Serial.available() < 12 && millis() - t < 1000)
+  while (Serial1.available() < 12 && millis() - t < 1000)
     ;
   for (int i = 0; i < 12; i++)
-    Serial.read();
+    Serial1.read();
 
   int idx = 0;
   for (int p = 0; p < 4; p++) {
     unsigned long chunkStart = millis();
-    while (Serial.available() < 9) {
+    while (Serial1.available() < 9) {
       if (millis() - chunkStart > 2000) {
         lcdPrint("Extract timeout", "");
         smartDelay(1000);
@@ -1124,30 +1134,30 @@ bool extractAndSendTemplate(int id) {
       }
     }
     for (int i = 0; i < 9; i++)
-      Serial.read();
+      Serial1.read();
 
     for (int i = 0; i < 128; i++) {
       chunkStart = millis();
-      while (!Serial.available()) {
+      while (!Serial1.available()) {
         if (millis() - chunkStart > 5000) {
           lcdPrint("Data timeout", "");
           smartDelay(1000);
           return false;
         }
       }
-      templateBuffer[idx++] = Serial.read();
+      templateBuffer[idx++] = Serial1.read();
     }
 
     chunkStart = millis();
-    while (Serial.available() < 2) {
+    while (Serial1.available() < 2) {
       if (millis() - chunkStart > 5000) {
         lcdPrint("Checksum timeout", "");
         smartDelay(1000);
         return false;
       }
     }
-    Serial.read();
-    Serial.read();
+    Serial1.read();
+    Serial1.read();
     lcdPrint("Extract", String("Chunk " + String(p + 1) + "/4").c_str());
   }
 
